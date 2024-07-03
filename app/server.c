@@ -43,29 +43,29 @@ typedef struct {
 
 int parse_request(Request* const request, char* buffer){
     int offset = 0;
-    char* method = strtok(buffer, " ");
+    char* token_buffer[1024];
+    char* method = strtok_r(buffer, " ", &token_buffer[0]);
     offset += strlen(method) + 1;
+    request->method = parse_method(method);
 
-    char* path = strtok(0, " ");
+    char* path = strtok_r(0, " ", &token_buffer[0]);
     offset += strlen(path) + 1;
+    request->target = path;
 
-    char* version = strtok(0, "\r\n");
+    char* version = strtok_r(0, "\r\n", &token_buffer[0]);
     offset += strlen(version) + 2;
+    request->version = version;
 
     char* header = &buffer[offset];
 
     char* p = strstr(header, "\r\n\r\n");
     if (p == NULL) {
-        printf("Malformed request");
-        return - 1;
+        return 0; // no header
     }
     int pos = p - header;
     header[pos] = 0;
     char* body = &header[pos + 4];
 
-    request->method = parse_method(method);
-    request->version = version;
-    request->target = path;
     request->headers = header;
     request->body = body;
     return 0;
@@ -97,25 +97,25 @@ typedef struct {
 
 } Response;
 
-void handle_connection(int client) {
+void *handle_connection(void* pclient) {
+    int client = *((int*) pclient);
     char buffer[1024];
     int received = recv(client, &buffer, 1024, 0);
     if (received == 0) {
-        return;
+        return NULL;
     }
     else if (received < 0) {
         printf("Error receiving data: %s \n", strerror(errno));
-        return;
+        return NULL;
     }
     assert(received < 1024);
 
     Request request = {0};
     printf("Parsing Request...\n%s\n", buffer);
     int parse_result = parse_request(&request, &buffer[0]);
-    if (parse_result < 0) return;
+    if (parse_result < 0) return NULL;
 
     char *response;
-    printf("Target: %s\n", request.target);
     if (strcmp(request.target, "/index.html") == 0) {
         response = "HTTP/1.1 200 OK\r\n\r\n";
     }
@@ -139,6 +139,9 @@ void handle_connection(int client) {
     }
     int len = strlen(response);
     int bytes_sent = send(client, response, len, 0);
+    printf("sent: %d\n", bytes_sent);
+    close(client);
+    return NULL;
 }
 
 int main() {
@@ -194,7 +197,11 @@ int main() {
             continue;
         }
         printf("Client connected\n");
-        handle_connection(client);
+        pthread_t new_process;
+
+        int *pclient_socket = &client;
+
+        pthread_create(&new_process, NULL, handle_connection, pclient_socket);
     }
 
 END:

@@ -40,7 +40,7 @@ typedef struct {
 } Request;
 
 
-int parse_request(Request* request, char* buffer){
+int parse_request(Request* const request, char* buffer){
     int offset = 0;
     char* method = strtok(buffer, " ");
     offset += strlen(method) + 1;
@@ -68,6 +68,27 @@ int parse_request(Request* request, char* buffer){
     request->headers = header;
     request->body = body;
     return 0;
+}
+
+char* get_header_value(const Request* const request, char* key) {
+    char *key_start = strstr(request->headers, key);
+    if (key_start == NULL) return NULL;
+
+    // find value
+    char* value_start = strstr(key_start, ": ");
+    if (value_start == NULL) return NULL;
+    value_start += 2;
+
+    // find new line
+    int len = 0;
+    while (value_start[len] != '\r' && value_start[len] != '\n') {
+        len++;
+    }
+
+    // copy value into new str
+    char* value = malloc(sizeof(char) * len);
+    memcpy(value, value_start, len);
+    return value;
 }
 
 typedef struct {
@@ -155,6 +176,12 @@ int main() {
         char* echo = request.target + sizeof("/echo/") - 1;
         printf("echo: %s\n", echo);
         asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(echo), echo);
+        printf("response: %s\n", response);
+    }
+    else if (strstr(request.target, "/user-agent") != NULL) {
+        char* user_agent = get_header_value(&request, "User-Agent");
+        printf("agent: %s\n", user_agent);
+        asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(user_agent), user_agent);
         printf("response: %s\n", response);
     }
     else {

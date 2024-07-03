@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <pthread.h>
 
 const char* HTTP_VERSION = "HTTP/1.1";
 
@@ -96,6 +97,49 @@ typedef struct {
 
 } Response;
 
+void handle_connection(int client) {
+    char buffer[1024];
+    int received = recv(client, &buffer, 1024, 0);
+    if (received == 0) {
+        return;
+    }
+    else if (received < 0) {
+        printf("Error receiving data: %s \n", strerror(errno));
+        return;
+    }
+    assert(received < 1024);
+
+    Request request = {0};
+    printf("Parsing Request...\n%s\n", buffer);
+    int parse_result = parse_request(&request, &buffer[0]);
+    if (parse_result < 0) return;
+
+    char *response;
+    printf("Target: %s\n", request.target);
+    if (strcmp(request.target, "/index.html") == 0) {
+        response = "HTTP/1.1 200 OK\r\n\r\n";
+    }
+    else if (strcmp(request.target, "/") == 0) {
+        response = "HTTP/1.1 200 OK\r\n\r\n";
+    }
+    else if (strstr(request.target, "/echo/") != NULL) {
+        char* echo = request.target + sizeof("/echo/") - 1;
+        printf("echo: %s\n", echo);
+        asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(echo), echo);
+        printf("response: %s\n", response);
+    }
+    else if (strstr(request.target, "/user-agent") != NULL) {
+        char* user_agent = get_header_value(&request, "User-Agent");
+        printf("agent: %s\n", user_agent);
+        asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(user_agent), user_agent);
+        printf("response: %s\n", response);
+    }
+    else {
+        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+    }
+    int len = strlen(response);
+    int bytes_sent = send(client, response, len, 0);
+}
 
 int main() {
     // Disable output buffering
@@ -135,7 +179,7 @@ int main() {
         return 1;
     }
 
-    int connection_backlog = 5;
+    int connection_backlog = 10;
     if (listen(server_fd, connection_backlog) != 0) {
         printf("Listen failed: %s \n", strerror(errno));
         return 1;
@@ -144,53 +188,17 @@ int main() {
     printf("Waiting for a client to connect...\n");
     client_addr_len = sizeof(client_addr);
 
-    int fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
-    printf("Client connected\n");
-
-    char buffer[1024];
-    int received = recv(fd, &buffer, 1024, 0);
-    if (received == 0) {
-        goto END;
+    while (1) {
+        int client = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
+        if (client == -1) {
+            continue;
+        }
+        printf("Client connected\n");
+        handle_connection(client);
     }
-    else if (received < 0) {
-        printf("Error receiving data: %s \n", strerror(errno));
-        return 1;
-    }
-    assert(received < 1024);
-
-    Request request = {0};
-    printf("Parsing Request...\n%s\n", buffer);
-    int parse_result = parse_request(&request, &buffer[0]);
-    if (parse_result < 0) goto END;
-
-
-    char *response;
-    printf("Target: %s\n", request.target);
-    if (strcmp(request.target, "/index.html") == 0) {
-        response = "HTTP/1.1 200 OK\r\n\r\n";
-    }
-    else if (strcmp(request.target, "/") == 0) {
-        response = "HTTP/1.1 200 OK\r\n\r\n";
-    }
-    else if (strstr(request.target, "/echo/") != NULL) {
-        char* echo = request.target + sizeof("/echo/") - 1;
-        printf("echo: %s\n", echo);
-        asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(echo), echo);
-        printf("response: %s\n", response);
-    }
-    else if (strstr(request.target, "/user-agent") != NULL) {
-        char* user_agent = get_header_value(&request, "User-Agent");
-        printf("agent: %s\n", user_agent);
-        asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(user_agent), user_agent);
-        printf("response: %s\n", response);
-    }
-    else {
-        response = "HTTP/1.1 404 Not Found\r\n\r\n";
-    }
-    int len = strlen(response);
-    int bytes_sent = send(fd, response, len, 0);
 
 END:
+    printf("\nSHUTTING DOWN\n");
     close(server_fd);
 
     return 0;

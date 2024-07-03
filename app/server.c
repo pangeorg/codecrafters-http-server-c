@@ -1,6 +1,8 @@
+#define _GNU_SOURCE 
+#include <assert.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -38,19 +40,24 @@ typedef struct {
 } Request;
 
 
-void parse_request(Request* request, char* buffer){
+int parse_request(Request* request, char* buffer){
     int offset = 0;
     char* method = strtok(buffer, " ");
-    offset += sizeof(method) + 1;
+    offset += strlen(method) + 1;
 
     char* path = strtok(0, " ");
-    offset += sizeof(path) + 1;
+    offset += strlen(path) + 1;
 
-    char* version = strtok(0, "\n");
-    offset += sizeof(version) + 1;
+    char* version = strtok(0, "\r\n");
+    offset += strlen(version) + 2;
 
-    char* header = &buffer[offset - 1];
+    char* header = &buffer[offset];
+
     char* p = strstr(header, "\r\n\r\n");
+    if (p == NULL) {
+        printf("Malformed request");
+        return - 1;
+    }
     int pos = p - header;
     header[pos] = 0;
     char* body = &header[pos + 4];
@@ -60,6 +67,7 @@ void parse_request(Request* request, char* buffer){
     request->target = path;
     request->headers = header;
     request->body = body;
+    return 0;
 }
 
 typedef struct {
@@ -127,23 +135,33 @@ int main() {
         printf("Error receiving data: %s \n", strerror(errno));
         return 1;
     }
+    assert(received < 1024);
 
     Request request = {0};
-    parse_request(&request, &buffer[0]);
+    printf("Parsing Request...\n%s\n", buffer);
+    int parse_result = parse_request(&request, &buffer[0]);
+    if (parse_result < 0) goto END;
 
-    char *reponse;
-    printf("%s\n", request.target);
+
+    char *response;
+    printf("Target: %s\n", request.target);
     if (strcmp(request.target, "/index.html") == 0) {
-        reponse = "HTTP/1.1 200 OK\r\n\r\n";
+        response = "HTTP/1.1 200 OK\r\n\r\n";
     }
     else if (strcmp(request.target, "/") == 0) {
-        reponse = "HTTP/1.1 200 OK\r\n\r\n";
+        response = "HTTP/1.1 200 OK\r\n\r\n";
+    }
+    else if (strstr(request.target, "/echo/") != NULL) {
+        char* echo = request.target + sizeof("/echo/") - 1;
+        printf("echo: %s\n", echo);
+        asprintf(&response, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%s", strlen(echo), echo);
+        printf("response: %s\n", response);
     }
     else {
-        reponse = "HTTP/1.1 404 Not Found\r\n\r\n";
+        response = "HTTP/1.1 404 Not Found\r\n\r\n";
     }
-    int len = strlen(reponse);
-    int bytes_sent = send(fd, reponse, len, 0);
+    int len = strlen(response);
+    int bytes_sent = send(fd, response, len, 0);
 
 END:
     close(server_fd);
